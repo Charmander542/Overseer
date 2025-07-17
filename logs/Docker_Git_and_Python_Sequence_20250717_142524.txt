@@ -1,0 +1,34 @@
++ CONTAINER_NAME=gr-lora-interactive-61730
++ IMAGE_NAME=rpp0/gr-lora:latest
++ GIT_REPO_URL=https://github.com/Charmander542/LoRaMultiplex.git
++ REPO_DIR_NAME=LoRaMultiplex
++ WORK_DIR=/root
++ SCRIPT_TO_RUN=multiplex.py
++ trap cleanup EXIT
++ echo '--- Setting up X11 forwarding... ---'
+--- Setting up X11 forwarding... ---
++ DOCKER_XAUTH=/tmp/.docker.xauth
++ touch /tmp/.docker.xauth
++ xauth nlist :0
++ sed -e 's/^..../ffff/'
++ xauth -f /tmp/.docker.xauth nmerge -
++ xhost +local:docker
++ echo '--- Starting a long-running Docker container named gr-lora-interactive-61730... ---'
+--- Starting a long-running Docker container named gr-lora-interactive-61730... ---
++ docker run -d --rm --name gr-lora-interactive-61730 --privileged --network=host -e DISPLAY=:0 -e XAUTHORITY=/tmp/.docker.xauth -v /tmp/.docker.xauth:/tmp/.docker.xauth:ro -v /tmp/.X11-unix:/tmp/.X11-unix:ro -v /dev/bus/usb:/dev/bus/usb -v /home/bumrc/GNURADIO:/root rpp0/gr-lora:latest tail -f /dev/null
++ echo '--- Waiting for container to initialize... ---'
+--- Waiting for container to initialize... ---
++ sleep 5
++ echo '--- Container is running. Executing commands inside it... ---'
+--- Container is running. Executing commands inside it... ---
++ echo '--- [STEP 1] Cloning git repository into /root/LoRaMultiplex... ---'
+--- [STEP 1] Cloning git repository into /root/LoRaMultiplex... ---
++ docker exec gr-lora-interactive-61730 ls
++ cleanup
++ echo '--- [CLEANUP] Script exiting. Stopping and removing container gr-lora-interactive-61730... ---'
+--- [CLEANUP] Script exiting. Stopping and removing container gr-lora-interactive-61730... ---
+++ docker ps -q -f name=gr-lora-interactive-61730
++ '[' e4e9de9f94ba ']'
++ docker stop gr-lora-interactive-61730
++ echo '--- [CLEANUP] Complete. ---'
+--- [CLEANUP] Complete. ---

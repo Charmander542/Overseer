@@ -1,0 +1,34 @@
+{
+  "serial_port": {
+    "port": "/dev/ttyACM0",
+    "baud_rate": 115200
+  },
+  "scripts_to_run": [
+    {
+      "name": "Docker_Git_and_Python_Sequence",
+      "enabled": true,
+      "type": "shell",
+      "config": {
+        "script_path": "./gr-lora/docker/docker_run_grlora.sh"
+      }
+    },
+    {
+      "name": "Gnuradio_TX",
+      "enabled": true,
+      "type": "conda",
+      "config": {
+        "env_name": "gr310",
+        "script_path": "scripts/CollisionTX.py"
+      }
+    },
+    {
+        "name": "Gnuradio_RX",
+        "enabled": false,
+        "type": "conda",
+        "config": {
+            "env_name": "gr310",
+            "script_path": "scripts/CollisionTX.py"
+     }
+    }
+  ]
+}

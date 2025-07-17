@@ -1,0 +1,16 @@
+[2025-07-17 14:45:33.108] RECV: [SX1262] Initializing ... success!
+[2025-07-17 14:45:33.161] RECV: [SX1262] Starting scan for LoRa preamble
+[2025-07-17 14:45:51.706] RECV: Radio Configuration
+[2025-07-17 14:45:51.758] RECV: Frequency = 910.30 MHz
+[2025-07-17 14:45:51.808] RECV: Bandwidth = 125
+[2025-07-17 14:45:51.859] RECV: Spreading Factor = 7
+[2025-07-17 14:45:51.909] RECV: Coding Rate = 4/5
+[2025-07-17 14:45:51.961] RECV: Sync Word = 0x34
+[2025-07-17 14:45:52.011] RECV: Preamble Length = 10
+[2025-07-17 14:45:52.062] RECV: Output Power = 10
+[2025-07-17 14:45:52.112] RECV: Frequency range:
+[2025-07-17 14:45:52.162] RECV: Mode:
+[2025-07-17 14:45:52.213] RECV: 0- Fixed
+[2025-07-17 14:45:52.263] RECV: Start:	910
+[2025-07-17 14:45:52.314] RECV: End:	910
+[2025-07-17 14:45:52.365] RECV: Step:	0.10
