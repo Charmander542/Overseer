@@ -9,9 +9,12 @@ import serial
 
 # --- Configuration ---
 CONFIG_FILE = 'config.json'
-LOG_DIR = 'logs'
+BASE_LOG_DIR = 'logs'
+# The 'name' from config.json of the script whose log file we will monitor
+TRIGGER_SCRIPT_NAME = "Gnuradio_TX"
+TRIGGER_WORD = "Finished"
 
-# --- Global variables ---
+# --- Global variables for process management ---
 active_processes = {}
 serial_thread = None
 serial_connection = None
@@ -21,199 +24,195 @@ def timestamp():
     """Returns a formatted timestamp string."""
     return datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
 
-def execute_script(script_config):
+def monitor_trigger_file(log_path, trigger_word):
     """
-    Constructs the correct command based on the script type (docker, shell, conda, local)
-    and executes it in a new process, logging all output.
+    A dedicated function to monitor a log file for a specific word.
+    This runs in a thread and blocks until the word is found.
     """
-    name = script_config['name']
-    log_filename = os.path.join(LOG_DIR, f"{name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+    print(f"[{timestamp()}] [MONITOR] Watching '{log_path}' for the word '{trigger_word}'...")
     
-    command = []
-    script_type = script_config['type']
-    config = script_config['config']
+    # Wait for the file to be created
+    while not os.path.exists(log_path) and not stop_event.is_set():
+        time.sleep(0.5)
 
-    print(f"[{timestamp()}] Preparing to start script: '{name}' (type: {script_type})")
+    if stop_event.is_set():
+        return
 
     try:
-        if script_type == 'docker':
-            extra_args = config.get('extra_docker_args', '').split()
-            command = [
-                'docker', 'run', '--rm', '-i',
-                *extra_args,
-                config['image_name'],
-                'python3', '-u', config['script_path_in_container']
-            ]
-        elif script_type == 'conda':
-            command = [
-                'conda', 'run', '-n', config['env_name'],
-                'python', '-u', config['script_path']
-            ]
-        elif script_type == 'shell':
-            command = [config['script_path']]
-        elif script_type == 'local':
-            command = ['python', '-u', config['script_path']]
-        else:
-            print(f"[{timestamp()}] ERROR: Unknown script type '{script_type}' for script '{name}'. Skipping.")
-            return
+        with open(log_path, 'r', encoding='utf-8') as f:
+            while not stop_event.is_set():
+                line = f.readline()
+                if line:
+                    if trigger_word in line:
+                        print(f"[{timestamp()}] [MONITOR] Trigger word '{trigger_word}' found! Signaling shutdown for this run.")
+                        return # Exit the function, allowing the main loop to proceed
+                else:
+                    # No new line, wait a bit before checking again
+                    time.sleep(1)
+    except Exception as e:
+        print(f"[{timestamp()}] [MONITOR] Error while monitoring file: {e}")
 
-        print(f"[{timestamp()}] Executing command: {' '.join(command)}")
+def execute_script(script_config, run_log_dir):
+    """
+    Launches a script and manages its logging for a specific run.
+    Returns the process object and the path to its log file.
+    """
+    name = script_config['name']
+    log_filename = os.path.join(run_log_dir, f"{name}.txt")
+    
+    command_str = ""
+    script_type = script_config['type']
+    config = script_config['config']
+    
+    try:
+        command_list = []
+        if script_type in ['shell', 'local', 'conda']:
+            if script_type == 'shell':
+                command_list = [config['script_path']]
+            elif script_type == 'local':
+                command_list = ['python', '-u', config['script_path']]
+            elif script_type == 'conda':
+                command_list = ['conda', 'run', '-n', config['env_name'], 'python', '-u', config['script_path']]
+            
+            command_str = ' '.join(command_list)
+        else:
+            print(f"[{timestamp()}] ERROR: Unknown or unsupported script type '{script_type}'.")
+            return None, None
+            
+        print(f"[{timestamp()}] Executing shell command: {command_str}")
         
-        # Open log file and start the subprocess
-        # stderr is redirected to stdout to capture all output in one place.
         log_file = open(log_filename, 'w')
         process = subprocess.Popen(
-            command,
-            shell=True, # This is the key
+            command_str,
+            shell=True,
             stdout=log_file,
             stderr=subprocess.STDOUT,
-            text=False,
+            text=True,
             bufsize=1
         )
-        active_processes[name] = {'process': process, 'log_file': log_file}
         print(f"[{timestamp()}] Started '{name}'. Logging to '{log_filename}'")
+        return process, log_filename, log_file
 
-    except FileNotFoundError as e:
-        print(f"[{timestamp()}] ERROR starting '{name}': Command not found. Is Docker/Conda installed and in your PATH? ({e})")
     except Exception as e:
         print(f"[{timestamp()}] ERROR starting '{name}': {e}")
+        return None, None, None
 
-
-def serial_reader_thread(ser, log_filename):
-    """
-    Continuously reads from the serial port and logs the data.
-    Runs in a separate thread.
-    """
-    print(f"[{timestamp()}] Serial reader started. Logging to '{log_filename}'")
-    with open(log_filename, 'w') as log_file:
-        while not stop_event.is_set():
-            try:
+def serial_reader_thread(ser, log_file_path):
+    """Continuously reads from the serial port and logs the data."""
+    print(f"[{timestamp()}] [SERIAL] Reader started. Logging to '{log_file_path}'")
+    try:
+        with open(log_file_path, 'w') as log_file:
+            while not stop_event.is_set():
                 if ser.in_waiting > 0:
                     line = ser.readline().decode('utf-8', errors='replace').strip()
                     if line:
-                        ts = timestamp()
-                        log_entry = f"[{ts}] RECV: {line}"
+                        log_entry = f"[{timestamp()}] RECV: {line}"
                         print(log_entry)
                         log_file.write(log_entry + '\n')
                         log_file.flush()
-            except serial.SerialException as e:
-                print(f"[{timestamp()}] ERROR: Serial device disconnected or error. {e}")
-                break
-            except Exception as e:
-                print(f"[{timestamp()}] An unexpected error occurred in the serial thread: {e}")
-                break
-            time.sleep(0.05)
-    print(f"[{timestamp()}] Serial reader thread stopped.")
-
-
-def main():
-    """Main function to orchestrate everything."""
-    global serial_thread, serial_connection
-
-    # --- 1. Initial Setup ---
-    if not os.path.exists(LOG_DIR):
-        os.makedirs(LOG_DIR)
-        print(f"[{timestamp()}] Created log directory: {LOG_DIR}")
-
-    try:
-        with open(CONFIG_FILE, 'r') as f:
-            config_data = json.load(f)
-    except FileNotFoundError:
-        print(f"[{timestamp()}] ERROR: '{CONFIG_FILE}' not found. Please create it.")
-        sys.exit(1)
-    except json.JSONDecodeError:
-        print(f"[{timestamp()}] ERROR: Could not decode '{CONFIG_FILE}'. Please check for syntax errors.")
-        sys.exit(1)
-
-    # --- 2. Start Serial Port Listener ---
-    serial_config = config_data.get('serial_port')
-    if serial_config:
-        try:
-            serial_connection = serial.Serial(serial_config['port'], serial_config['baud_rate'], timeout=1)
-            print(f"[{timestamp()}] Serial port {serial_config['port']} opened successfully.")
-            
-            log_filename = os.path.join(LOG_DIR, f"serial_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
-            serial_thread = threading.Thread(
-                target=serial_reader_thread, 
-                args=(serial_connection, log_filename),
-                daemon=True
-            )
-            serial_thread.start()
-        except serial.SerialException as e:
-            print(f"[{timestamp()}] ERROR: Could not open serial port {serial_config['port']}. {e}")
-            print("[{timestamp()}] Continuing without serial functionality.")
-    
-    # --- 3. Start Scripts ---
-    for script_conf in config_data['scripts_to_run']:
-        if script_conf.get('enabled', False):
-            execute_script(script_conf)
-        else:
-            print(f"[{timestamp()}] Script '{script_conf['name']}' is disabled in config. Skipping.")
-    
-    print("\n" + "="*50)
-    print("All configured processes are running.")
-    print("="*50 + "\n")
-
-    # --- 4. Main Interactive Loop ---
-    try:
-        while True:
-            print("\n--- Main Controller Menu ---")
-            print("(s) Send serial command")
-            print("(c) Check process status")
-            print("(q) Quit and terminate all processes")
-            choice = input("Enter your choice: ").lower()
-
-            if choice == 's':
-                if serial_connection and serial_connection.is_open:
-                    cmd = input("Enter command to send: ")
-                    serial_connection.write((cmd + '\n').encode('utf-8'))
-                    print(f"[{timestamp()}] SENT: {cmd}")
                 else:
-                    print("Serial port not available.")
-            elif choice == 'c':
-                print("\n--- Process Status ---")
-                if not active_processes:
-                    print("No active processes.")
-                for name, data in active_processes.items():
-                    if data['process'].poll() is None:
-                        status = "Running"
-                    else:
-                        status = f"Finished with exit code {data['process'].poll()}"
-                    print(f"- {name}: {status}")
-            elif choice == 'q':
-                break
-            else:
-                print("Invalid choice, please try again.")
+                    time.sleep(0.05)
+    except Exception as e:
+        print(f"[{timestamp()}] [SERIAL] An error occurred in the serial thread: {e}")
+    print(f"[{timestamp()}] [SERIAL] Reader thread stopped.")
 
-    except KeyboardInterrupt:
-        print(f"\n[{timestamp()}] Ctrl+C detected. Shutting down...")
-    
-    # --- 5. Cleanup ---
-    print(f"[{timestamp()}] Initiating shutdown...")
-    stop_event.set() # Signal threads to stop
+def shutdown_all_processes():
+    """Gracefully terminates all active processes and threads."""
+    print(f"[{timestamp()}] --- Initiating shutdown of all services... ---")
+    stop_event.set() # Signal all threads to stop
 
     if serial_connection and serial_connection.is_open:
         serial_connection.close()
         print(f"[{timestamp()}] Serial port closed.")
 
-    if serial_thread:
+    if serial_thread and serial_thread.is_alive():
         serial_thread.join(timeout=2)
 
-    for name, data in active_processes.items():
+    for name, data in list(active_processes.items()):
         print(f"[{timestamp()}] Terminating '{name}' (PID: {data['process'].pid})...")
         data['process'].terminate()
         try:
-            # Wait a bit for graceful termination
             data['process'].wait(timeout=5)
         except subprocess.TimeoutExpired:
             print(f"[{timestamp()}] '{name}' did not terminate gracefully. Forcing kill...")
             data['process'].kill()
         
-        data['log_file'].close()
+        if data['log_file']:
+            data['log_file'].close()
         print(f"[{timestamp()}] '{name}' terminated.")
+    
+    active_processes.clear()
+    stop_event.clear() # Reset the event for the next run
+    print(f"[{timestamp()}] --- Shutdown complete. ---")
 
-    print(f"[{timestamp()}] Shutdown complete. All logs saved in '{LOG_DIR}'.")
+def main():
+    """Main automation loop."""
+    global serial_thread, serial_connection
+    run_number = 1
+    
+    try:
+        with open(CONFIG_FILE, 'r') as f:
+            config_data = json.load(f)
+    except Exception as e:
+        print(f"FATAL: Could not load '{CONFIG_FILE}'. Exiting. Error: {e}")
+        sys.exit(1)
 
+    while True:
+        print("\n" + "="*20 + f" Starting Run #{run_number} " + "="*20)
+        
+        # --- 1. Setup for this run ---
+        run_log_dir = os.path.join(BASE_LOG_DIR, f"run_{run_number}")
+        os.makedirs(run_log_dir, exist_ok=True)
+        print(f"[{timestamp()}] Log directory for this run: '{run_log_dir}'")
+
+        trigger_log_path = None
+        
+        # --- 2. Start Serial Port Listener ---
+        serial_config = config_data.get('serial_port')
+        if serial_config:
+            try:
+                serial_connection = serial.Serial(serial_config['port'], serial_config['baud_rate'], timeout=1)
+                serial_log_path = os.path.join(run_log_dir, "serial.txt")
+                serial_thread = threading.Thread(target=serial_reader_thread, args=(serial_connection, serial_log_path), daemon=True)
+                serial_thread.start()
+            except serial.SerialException as e:
+                print(f"[{timestamp()}] WARNING: Could not open serial port. Continuing without it. Error: {e}")
+        
+        # --- 3. Start Scripts ---
+        for script_conf in config_data['scripts_to_run']:
+            if script_conf.get('enabled', False):
+                process, log_path, log_file_handle = execute_script(script_conf, run_log_dir)
+                if process:
+                    active_processes[script_conf['name']] = {'process': process, 'log_file': log_file_handle}
+                    if script_conf['name'] == TRIGGER_SCRIPT_NAME:
+                        trigger_log_path = log_path
+
+        if not trigger_log_path:
+            print(f"FATAL: Trigger script '{TRIGGER_SCRIPT_NAME}' not found or failed to start. Cannot continue.")
+            break
+            
+        # --- 4. Monitor for Trigger ---
+        # This function will block until the trigger word is found or the program is stopped
+        monitor_trigger_file(trigger_log_path, TRIGGER_WORD)
+
+        # If we get here, it means the trigger was found or the stop_event was set by Ctrl+C
+        if stop_event.is_set(): # Check if we were interrupted
+             break
+
+        print(f"[{timestamp()}] --- Run #{run_number} complete. Restarting services... ---")
+        shutdown_all_processes()
+        run_number += 1
+        time.sleep(2) # Brief pause before starting the next run
+
+    # --- 5. Final Cleanup on Exit ---
+    print(f"\n[{timestamp()}] Main loop exited. Performing final cleanup.")
+    shutdown_all_processes()
+    print(f"[{timestamp()}] Automation controller has shut down.")
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        # This handles Ctrl+C if it's pressed while the main loop is between states
+        print(f"\n[{timestamp()}] Ctrl+C detected. Shutting down...")
+        stop_event.set()
