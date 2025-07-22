@@ -164,7 +164,7 @@ def main():
         
         # --- 1. Setup for this run ---
         run_log_dir = os.path.join(BASE_LOG_DIR, "run_" + str(run_number))
-        os.makedirs(run_log_dir, exist_ok=True)
+        os.makedirs(run_log_dir)#exist_ok=True)
         #print(f"[{timestamp()}] Log directory for this run: '{run_log_dir}'")
 
         trigger_log_path = None
