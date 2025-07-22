@@ -5,14 +5,6 @@
   },
   "scripts_to_run": [
     {
-        "name": "Gnuradio_TX",
-        "enabled": true,
-        "type": "local",
-        "config": {
-            "script_path": "scripts/SingleRX.py"
-     }
-    },
-    {
         "name": "Gnuradio_RX",
         "enabled": true,
         "type": "local",
