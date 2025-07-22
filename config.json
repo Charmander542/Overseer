@@ -9,7 +9,15 @@
         "enabled": true,
         "type": "local",
         "config": {
-            "script_path": "scripts/SingleRX.py"
+            "script_path": "./../lora_receive_realtime.py"
+     }
+    },
+    {
+        "name": "Multiplex",
+        "enabled": true,
+        "type": "local",
+        "config": {
+            "script_path": "./../LoRaMultiplex/multiplex.py"
      }
     }
   ]
