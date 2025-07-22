@@ -8,7 +8,7 @@ from datetime import datetime
 import serial
 
 # --- Configuration ---
-CONFIG_FILE = 'config.json'
+CONFIG_FILE = '/src/apps/Overseer/config.json'
 BASE_LOG_DIR = 'logs'
 # The 'name' from config.json of the script whose log file we will monitor
 TRIGGER_SCRIPT_NAME = "Gnuradio_TX"
