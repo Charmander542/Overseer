@@ -59,7 +59,7 @@ def execute_script(script_config, run_log_dir):
     Returns the process object and the path to its log file.
     """
     name = script_config['name']
-    log_filename = os.path.join(run_log_dir, f"{name}.txt")
+    log_filename = os.path.join(run_log_dir, name+".txt")
     
     command_str = ""
     script_type = script_config['type']
@@ -107,7 +107,7 @@ def serial_reader_thread(ser, log_file_path):
                 if ser.in_waiting > 0:
                     line = ser.readline().decode('utf-8', errors='replace').strip()
                     if line:
-                        log_entry = f"[{timestamp()}] RECV: {line}"
+                        log_entry = timestamp() + "RECV: " +line #f"[{timestamp()}] RECV: {line}"
                         print(log_entry)
                         log_file.write(log_entry + '\n')
                         log_file.flush()
@@ -160,10 +160,10 @@ def main():
         sys.exit(1)
 
     while True:
-        print("\n" + "="*20 + f" Starting Run #{run_number} " + "="*20)
+        #print("\n" + "="*20 + f" Starting Run #{run_number} " + "="*20)
         
         # --- 1. Setup for this run ---
-        run_log_dir = os.path.join(BASE_LOG_DIR, f"run_{run_number}")
+        run_log_dir = os.path.join(BASE_LOG_DIR, "run_" + str(run_number))
         os.makedirs(run_log_dir, exist_ok=True)
         #print(f"[{timestamp()}] Log directory for this run: '{run_log_dir}'")
 
