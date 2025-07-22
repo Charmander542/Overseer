@@ -29,7 +29,7 @@ def monitor_trigger_file(log_path, trigger_word):
     A dedicated function to monitor a log file for a specific word.
     This runs in a thread and blocks until the word is found.
     """
-    print(f"[{timestamp()}] [MONITOR] Watching '{log_path}' for the word '{trigger_word}'...")
+    ##print(f"[{timestamp()}] [MONITOR] Watching '{log_path}' for the word '{trigger_word}'...")
     
     # Wait for the file to be created
     while not os.path.exists(log_path) and not stop_event.is_set():
@@ -44,13 +44,13 @@ def monitor_trigger_file(log_path, trigger_word):
                 line = f.readline()
                 if line:
                     if trigger_word in line:
-                        print(f"[{timestamp()}] [MONITOR] Trigger word '{trigger_word}' found! Signaling shutdown for this run.")
+                        ##print(f"[{timestamp()}] [MONITOR] Trigger word '{trigger_word}' found! Signaling shutdown for this run.")
                         return # Exit the function, allowing the main loop to proceed
                 else:
                     # No new line, wait a bit before checking again
                     time.sleep(1)
     except Exception as e:
-        print(f"[{timestamp()}] [MONITOR] Error while monitoring file: {e}")
+        #print(f"[{timestamp()}] [MONITOR] Error while monitoring file: {e}")
 
 def execute_script(script_config, run_log_dir):
     """
@@ -76,10 +76,10 @@ def execute_script(script_config, run_log_dir):
             
             command_str = ' '.join(command_list)
         else:
-            print(f"[{timestamp()}] ERROR: Unknown or unsupported script type '{script_type}'.")
+            #print(f"[{timestamp()}] ERROR: Unknown or unsupported script type '{script_type}'.")
             return None, None
             
-        print(f"[{timestamp()}] Executing shell command: {command_str}")
+        #print(f"[{timestamp()}] Executing shell command: {command_str}")
         
         log_file = open(log_filename, 'w')
         process = subprocess.Popen(
@@ -90,16 +90,16 @@ def execute_script(script_config, run_log_dir):
             text=True,
             bufsize=1
         )
-        print(f"[{timestamp()}] Started '{name}'. Logging to '{log_filename}'")
+        #print(f"[{timestamp()}] Started '{name}'. Logging to '{log_filename}'")
         return process, log_filename, log_file
 
     except Exception as e:
-        print(f"[{timestamp()}] ERROR starting '{name}': {e}")
+        #print(f"[{timestamp()}] ERROR starting '{name}': {e}")
         return None, None, None
 
 def serial_reader_thread(ser, log_file_path):
     """Continuously reads from the serial port and logs the data."""
-    print(f"[{timestamp()}] [SERIAL] Reader started. Logging to '{log_file_path}'")
+    #print(f"[{timestamp()}] [SERIAL] Reader started. Logging to '{log_file_path}'")
     try:
         with open(log_file_path, 'w') as log_file:
             while not stop_event.is_set():
@@ -113,37 +113,37 @@ def serial_reader_thread(ser, log_file_path):
                 else:
                     time.sleep(0.05)
     except Exception as e:
-        print(f"[{timestamp()}] [SERIAL] An error occurred in the serial thread: {e}")
-    print(f"[{timestamp()}] [SERIAL] Reader thread stopped.")
+        #print(f"[{timestamp()}] [SERIAL] An error occurred in the serial thread: {e}")
+    #print(f"[{timestamp()}] [SERIAL] Reader thread stopped.")
 
 def shutdown_all_processes():
     """Gracefully terminates all active processes and threads."""
-    print(f"[{timestamp()}] --- Initiating shutdown of all services... ---")
+    #print(f"[{timestamp()}] --- Initiating shutdown of all services... ---")
     stop_event.set() # Signal all threads to stop
 
     if serial_connection and serial_connection.is_open:
         serial_connection.close()
-        print(f"[{timestamp()}] Serial port closed.")
+        #print(f"[{timestamp()}] Serial port closed.")
 
     if serial_thread and serial_thread.is_alive():
         serial_thread.join(timeout=2)
 
     for name, data in list(active_processes.items()):
-        print(f"[{timestamp()}] Terminating '{name}' (PID: {data['process'].pid})...")
+        #print(f"[{timestamp()}] Terminating '{name}' (PID: {data['process'].pid})...")
         data['process'].terminate()
         try:
             data['process'].wait(timeout=5)
         except subprocess.TimeoutExpired:
-            print(f"[{timestamp()}] '{name}' did not terminate gracefully. Forcing kill...")
+            #print(f"[{timestamp()}] '{name}' did not terminate gracefully. Forcing kill...")
             data['process'].kill()
         
         if data['log_file']:
             data['log_file'].close()
-        print(f"[{timestamp()}] '{name}' terminated.")
+        #print(f"[{timestamp()}] '{name}' terminated.")
     
     active_processes.clear()
     stop_event.clear() # Reset the event for the next run
-    print(f"[{timestamp()}] --- Shutdown complete. ---")
+    #print(f"[{timestamp()}] --- Shutdown complete. ---")
 
 def main():
     """Main automation loop."""
@@ -154,7 +154,7 @@ def main():
         with open(CONFIG_FILE, 'r') as f:
             config_data = json.load(f)
     except Exception as e:
-        print(f"FATAL: Could not load '{CONFIG_FILE}'. Exiting. Error: {e}")
+        #print(f"FATAL: Could not load '{CONFIG_FILE}'. Exiting. Error: {e}")
         sys.exit(1)
 
     while True:
@@ -163,7 +163,7 @@ def main():
         # --- 1. Setup for this run ---
         run_log_dir = os.path.join(BASE_LOG_DIR, f"run_{run_number}")
         os.makedirs(run_log_dir, exist_ok=True)
-        print(f"[{timestamp()}] Log directory for this run: '{run_log_dir}'")
+        #print(f"[{timestamp()}] Log directory for this run: '{run_log_dir}'")
 
         trigger_log_path = None
         
@@ -176,7 +176,7 @@ def main():
                 serial_thread = threading.Thread(target=serial_reader_thread, args=(serial_connection, serial_log_path), daemon=True)
                 serial_thread.start()
             except serial.SerialException as e:
-                print(f"[{timestamp()}] WARNING: Could not open serial port. Continuing without it. Error: {e}")
+                #print(f"[{timestamp()}] WARNING: Could not open serial port. Continuing without it. Error: {e}")
         
         # --- 3. Start Scripts ---
         for script_conf in config_data['scripts_to_run']:
@@ -188,7 +188,7 @@ def main():
                         trigger_log_path = log_path
 
         if not trigger_log_path:
-            print(f"FATAL: Trigger script '{TRIGGER_SCRIPT_NAME}' not found or failed to start. Cannot continue.")
+            #print(f"FATAL: Trigger script '{TRIGGER_SCRIPT_NAME}' not found or failed to start. Cannot continue.")
             break
             
         # --- 4. Monitor for Trigger ---
@@ -199,20 +199,20 @@ def main():
         if stop_event.is_set(): # Check if we were interrupted
              break
 
-        print(f"[{timestamp()}] --- Run #{run_number} complete. Restarting services... ---")
+        #print(f"[{timestamp()}] --- Run #{run_number} complete. Restarting services... ---")
         shutdown_all_processes()
         run_number += 1
         time.sleep(2) # Brief pause before starting the next run
 
     # --- 5. Final Cleanup on Exit ---
-    print(f"\n[{timestamp()}] Main loop exited. Performing final cleanup.")
+    #print(f"\n[{timestamp()}] Main loop exited. Performing final cleanup.")
     shutdown_all_processes()
-    print(f"[{timestamp()}] Automation controller has shut down.")
+    #print(f"[{timestamp()}] Automation controller has shut down.")
 
 if __name__ == '__main__':
     try:
         main()
     except KeyboardInterrupt:
         # This handles Ctrl+C if it's pressed while the main loop is between states
-        print(f"\n[{timestamp()}] Ctrl+C detected. Shutting down...")
+        #print(f"\n[{timestamp()}] Ctrl+C detected. Shutting down...")
         stop_event.set()
