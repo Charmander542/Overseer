@@ -5,7 +5,7 @@ import time
 import os
 import sys
 from datetime import datetime
-import serial
+#import serial
 
 # --- Configuration ---
 CONFIG_FILE = '/src/apps/Overseer/config.json'
@@ -170,16 +170,16 @@ def main():
         trigger_log_path = None
         
         # --- 2. Start Serial Port Listener ---
-        serial_config = config_data.get('serial_port')
-        if serial_config:
-            try:
-                serial_connection = serial.Serial(serial_config['port'], serial_config['baud_rate'], timeout=1)
-                serial_log_path = os.path.join(run_log_dir, "serial.txt")
-                serial_thread = threading.Thread(target=serial_reader_thread, args=(serial_connection, serial_log_path), daemon=True)
-                serial_thread.start()
-            except serial.SerialException as e:
-                print("error3")
-                #print(f"[{timestamp()}] WARNING: Could not open serial port. Continuing without it. Error: {e}")
+        #serial_config = config_data.get('serial_port')
+        #if serial_config:
+         #   try:
+           #     serial_connection = serial.Serial(serial_config['port'], serial_config['baud_rate'], timeout=1)
+         #       serial_log_path = os.path.join(run_log_dir, "serial.txt")
+          #      serial_thread = threading.Thread(target=serial_reader_thread, args=(serial_connection, serial_log_path), daemon=True)
+        #        serial_thread.start()
+       #     except serial.SerialException as e:
+         #       print("error3")
+        #        #print(f"[{timestamp()}] WARNING: Could not open serial port. Continuing without it. Error: {e}")
         
         # --- 3. Start Scripts ---
         for script_conf in config_data['scripts_to_run']:
