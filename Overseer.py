@@ -50,6 +50,7 @@ def monitor_trigger_file(log_path, trigger_word):
                     # No new line, wait a bit before checking again
                     time.sleep(1)
     except Exception as e:
+        print("error")
         #print(f"[{timestamp()}] [MONITOR] Error while monitoring file: {e}")
 
 def execute_script(script_config, run_log_dir):
@@ -113,6 +114,7 @@ def serial_reader_thread(ser, log_file_path):
                 else:
                     time.sleep(0.05)
     except Exception as e:
+        print("error2")
         #print(f"[{timestamp()}] [SERIAL] An error occurred in the serial thread: {e}")
     #print(f"[{timestamp()}] [SERIAL] Reader thread stopped.")
 
@@ -176,6 +178,7 @@ def main():
                 serial_thread = threading.Thread(target=serial_reader_thread, args=(serial_connection, serial_log_path), daemon=True)
                 serial_thread.start()
             except serial.SerialException as e:
+                print("error3")
                 #print(f"[{timestamp()}] WARNING: Could not open serial port. Continuing without it. Error: {e}")
         
         # --- 3. Start Scripts ---
