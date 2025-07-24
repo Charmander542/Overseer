@@ -7,14 +7,15 @@
     {
         "name": "Gnuradio_TX",
         "enabled": true,
-        "type": "local",
+        "type": "conda",
         "config": {
-            "script_path": "scripts/SingleRX.py"
+            "env_name" :"gr310",
+            "script_path": "scripts/CollisionTX.py"
      }
     },
     {
         "name": "Gnuradio_RX",
-        "enabled": true,
+        "enabled": false,
         "type": "local",
         "config": {
             "script_path": "scripts/SingleRX.py"
