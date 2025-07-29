@@ -1,220 +1,211 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python2
 # -*- coding: utf-8 -*-
-
-#
-# SPDX-License-Identifier: GPL-3.0
-#
+##################################################
 # GNU Radio Python Flow Graph
-# Title: LoRa TX with Power Control and Auto-Exit (Corrected)
-# GNU Radio version: 3.10.11.0
-#
+# Title: Hopping (Corrected)
+# Generated: Thu Jul 24 17:26:10 2025
+##################################################
 
-from gnuradio import blocks
-import pmt
-from gnuradio import gr
-from gnuradio.filter import firdes
-from gnuradio.fft import window
-import sys
-import signal
-from argparse import ArgumentParser
-from gnuradio.eng_arg import eng_float, intx
+if __name__ == '__main__':
+    import ctypes
+    import sys
+    if sys.platform.startswith('linux'):
+        try:
+            x11 = ctypes.cdll.LoadLibrary('libX11.so')
+            x11.XInitThreads()
+        except:
+            print "Warning: failed to XInitThreads()"
+
 from gnuradio import eng_notation
-from gnuradio import soapy
-import time
-import gnuradio.lora_sdr as lora_sdr
-import threading
-import random
-
-# A new custom block to send a burst of N messages and then signal completion.
-class MessageBurstSource(gr.basic_block):
-    """
-    A custom GNU Radio source block that generates a specific number of
-    sequenced messages (e.g., "TEST1", "TEST2", ...) at a regular interval,
-    signals completion, and then stops.
-
-    Args:
-        num_messages (int): The total number of messages to send.
-        interval_ms (float): The time interval between messages in milliseconds.
-        done_event (threading.Event): An event to set when all messages are sent.
-    """
-    def __init__(self, num_messages=500, interval_ms=2000.0, done_event=None):
-        gr.basic_block.__init__(self,
-            name="Message Burst Source",
-            in_sig=None,
-            out_sig=None)
-
-        self.message_port_register_out(pmt.intern('strobe'))
-        self.num_messages = num_messages
-        self.interval_s = interval_ms / 1000.0
-        self._sent_count = 0
-        self._thread = None
-        self._stop_event = threading.Event()
-        # Event to signal completion to the main thread
-        self._done_event = done_event
-
-    def start(self):
-        """Called by the scheduler to start the block's thread."""
-        self._thread = threading.Thread(target=self._sender_loop)
-        self._thread.daemon = True
-        self._thread.start()
-        return True
-
-    def stop(self):
-        """Called by the scheduler to stop the block's thread."""
-        self._stop_event.set()
-        if self._thread is not None:
-            self._thread.join()
-        return True
-
-    def _sender_loop(self):
-        """The thread's target function that sends messages."""
-        while not self._stop_event.is_set() and self._sent_count < self.num_messages:
-            self._sent_count += 1
-            msg_str = f"TEST{self._sent_count}"
-            msg = pmt.intern(msg_str)
-            self.message_port_pub(pmt.intern('strobe'), msg)
-
-            print(f"Sent message: {msg_str} ({self._sent_count}/{self.num_messages})")
-
-            # Wait for the interval, but allow for a quick exit if stop() is called.
-            self._stop_event.wait(self.interval_s)
-        
-        if not self._stop_event.is_set():
-            print("Finished sending all messages.")
-            if self._done_event:
-                print("Signaling flowgraph to shut down.")
-                self._done_event.set()
-
-# Global event to signal a shutdown request from Ctrl+C
-shutdown_event = threading.Event()
-
-def sig_handler(sig=None, frame=None):
-    """Signal handler to catch Ctrl+C and set the shutdown event."""
-    print("\n>>> SIGINT or SIGTERM detected. Requesting graceful shutdown...")
-    shutdown_event.set()
+from gnuradio import gr
+from gnuradio import wxgui
+from gnuradio.eng_option import eng_option
+from gnuradio import uhd
+from gnuradio.fft import window
+from gnuradio.filter import firdes
+from gnuradio.wxgui import fftsink2
+from grc_gnuradio import wxgui as grc_wxgui
+from optparse import OptionParser
+import lora
+import osmosdr
+import wx
 
 
-class CollisionTX(gr.top_block):
+class single(grc_wxgui.top_block_gui):
 
-    # MODIFIED: Added 'power' argument for TX gain control
-    def __init__(self, freq, power):
-        gr.top_block.__init__(self, "Collision TX", catch_exceptions=True)
-        
-        self.transmission_done = threading.Event()
+    def __init__(self):
+        grc_wxgui.top_block_gui.__init__(self, title="Hopping")
 
         ##################################################
         # Variables
         ##################################################
-        self.samp_rate = samp_rate = 1000e3
-        self.freq = freq
-        self.power = power # Store the power variable
+        self.sf = sf = 7
+        self.samp_rate = samp_rate = 1e6
+        self.bw = bw = 125000
+        
+        self.target_freq = target_freq = [902.3e6, 902.5e6, 902.7e6, 902.9e6, 903.1e6, 903.3e6, 903.5e6, 903.7e6, 903.9e6, 904.1e6]
+        
+        self.hop_interval = hop_interval = 1000 # 1 second
+        
+        self.freq_index = freq_index = 0
+
+        self.symbols_per_sec = symbols_per_sec = float(bw) / (2**sf)
+        self.firdes_tap = firdes_tap = firdes.low_pass(1, samp_rate, bw, 10000, firdes.WIN_HAMMING, 6.67)
+        self.downlink = downlink = False
+        self.decimation = decimation = 1
+        self.capture_freq = capture_freq = 903e6
+        self.bitrate = bitrate = sf * (1 / (2**sf / float(bw)))
 
         ##################################################
         # Blocks
         ##################################################
-        dev = 'driver=hackrf'
-        stream_args = ''
-        tune_args = ['']
-        settings = ['']
-
-        self.soapy_hackrf_sink_0 = soapy.sink(dev, "fc32", 1, '', stream_args, tune_args, settings)
-        self.soapy_hackrf_sink_0.set_sample_rate(0, samp_rate)
-        self.soapy_hackrf_sink_0.set_bandwidth(0, 0)
-        self.soapy_hackrf_sink_0.set_frequency(0, self.freq)
-        # MODIFIED: Correctly set TX gain. AMP (LNA) should be off for transmit.
-        self.soapy_hackrf_sink_0.set_gain(0, 'AMP', 0)
-        self.soapy_hackrf_sink_0.set_gain(0, 'VGA', self.power)
-
-        self.lora_tx_0 = lora_sdr.lora_sdr_lora_tx(
-            bw=125000,
-            cr=1,
-            has_crc=True,
-            impl_head=False,
-            samp_rate=500000,
-            sf=7,
-            ldro_mode=2,
-            frame_zero_padd=1280,
-            sync_word=[0x34]
+        self.wxgui_fftsink2_1 = fftsink2.fft_sink_c(
+        	self.GetWin(),
+        	baseband_freq=capture_freq,
+        	y_per_div=10,
+        	y_divs=10,
+        	ref_level=0,
+        	ref_scale=2.0,
+        	sample_rate=samp_rate,
+        	fft_size=1024,
+        	fft_rate=15,
+        	average=False,
+        	avg_alpha=None,
+        	title='FFT Plot',
+        	peak_hold=False,
         )
-
-        self.message_burst_source_0 = MessageBurstSource(
-            num_messages=10, 
-            interval_ms=random.random() * 4000 + 1000, 
-            done_event=self.transmission_done
+        self.Add(self.wxgui_fftsink2_1.win)
+        self.uhd_usrp_source_0 = uhd.usrp_source(
+        	",".join(("serial=3134B8C", "")),
+        	uhd.stream_args(
+        		cpu_format="fc32",
+        		channels=range(1),
+        	),
         )
+        self.uhd_usrp_source_0.set_samp_rate(samp_rate)
+        self.uhd_usrp_source_0.set_center_freq(capture_freq, 0)
+        self.uhd_usrp_source_0.set_gain(20, 0)
+        
+        # REMOVED: This block was the source of the crash. It was defined
+        # but never connected, and it used a module name 'filter' that was
+        # not imported, causing the __init__ method to fail.
+        # self.rational_resampler_xxx_0 = filter.rational_resampler_ccc(...)
+
+        self.lora_message_socket_sink_0 = lora.message_socket_sink('127.0.0.1', 40868, 0)
+
+        self.lora_lora_receiver_0 = lora.lora_receiver(samp_rate, capture_freq, ([self.target_freq[self.freq_index]]), bw, sf, False, 4, True, False, downlink, decimation, False, False)
+        
+        ##################################################
+        # Timer for frequency hopping
+        ##################################################
+        self.hop_timer = wx.Timer(self, wx.ID_ANY)
+        self.Bind(wx.EVT_TIMER, self._on_hop_timer, self.hop_timer)
 
         ##################################################
         # Connections
         ##################################################
-        self.msg_connect((self.message_burst_source_0, 'strobe'), (self.lora_tx_0, 'in'))
-        self.connect((self.lora_tx_0, 0), (self.soapy_hackrf_sink_0, 0))
+        self.msg_connect((self.lora_lora_receiver_0, 'frames'), (self.lora_message_socket_sink_0, 'in'))
+        self.connect((self.uhd_usrp_source_0, 0), (self.lora_lora_receiver_0, 0))
+        self.connect((self.uhd_usrp_source_0, 0), (self.wxgui_fftsink2_1, 0))
 
-    # This method is no longer needed as we poll the event directly
-    # def wait_for_completion(self):
-    #     self.transmission_done.wait()
+    def Start(self, *args, **kwargs):
+        super(single, self).Start(*args, **kwargs)
+        if self.hop_interval > 0:
+            self.hop_timer.Start(self.hop_interval)
 
-    def get_power(self):
-        return self.power
-        
-    def set_power(self, power):
-        """Sets the TX VGA gain."""
-        self.power = power
-        # MODIFIED: Correctly set the 'VGA' gain element
-        if self.soapy_hackrf_sink_0 is not None:
-            self.soapy_hackrf_sink_0.set_gain(0, 'VGA', self.power)
+    def _on_hop_timer(self, event):
+        self.freq_index = (self.freq_index + 1) % len(self.target_freq)
+        new_freq = self.target_freq[self.freq_index]
+        self.lora_lora_receiver_0.set_frequencies([new_freq])
+        print("Hopping to frequency: %.2f MHz" % (new_freq / 1e6))
+
+    # ... (rest of the getter/setter methods are unchanged) ...
+    def get_sf(self):
+        return self.sf
+
+    def set_sf(self, sf):
+        self.sf = sf
+        self.set_symbols_per_sec(float(self.bw) / (2**self.sf))
+        self.lora_lora_receiver_0.set_sf(self.sf)
+        self.set_bitrate(self.sf * (1 / (2**self.sf / float(self.bw))))
+
+    def get_samp_rate(self):
+        return self.samp_rate
+
+    def set_samp_rate(self, samp_rate):
+        self.samp_rate = samp_rate
+        self.wxgui_fftsink2_1.set_sample_rate(self.samp_rate)
+        self.uhd_usrp_source_0.set_samp_rate(self.samp_rate)
+        self.set_firdes_tap(firdes.low_pass(1, self.samp_rate, self.bw, 10000, firdes.WIN_HAMMING, 6.67))
+
+    def get_bw(self):
+        return self.bw
+
+    def set_bw(self, bw):
+        self.bw = bw
+        self.set_symbols_per_sec(float(self.bw) / (2**self.sf))
+        self.set_firdes_tap(firdes.low_pass(1, self.samp_rate, self.bw, 10000, firdes.WIN_HAMMING, 6.67))
+        self.set_bitrate(self.sf * (1 / (2**self.sf / float(self.bw))))
+
+    def get_target_freq(self):
+        return self.target_freq
+
+    def set_target_freq(self, target_freq):
+        self.target_freq = target_freq
+        self.freq_index = 0
+        self.lora_lora_receiver_0.set_frequencies([self.target_freq[self.freq_index]])
+
+    def get_symbols_per_sec(self):
+        return self.symbols_per_sec
+
+    def set_symbols_per_sec(self, symbols_per_sec):
+        self.symbols_per_sec = symbols_per_sec
+
+    def get_firdes_tap(self):
+        return self.firdes_tap
+
+    def set_firdes_tap(self, firdes_tap):
+        self.firdes_tap = firdes_tap
+
+    def get_downlink(self):
+        return self.downlink
+
+    def set_downlink(self, downlink):
+        self.downlink = downlink
+
+    def get_decimation(self):
+        return self.decimation
+
+    def set_decimation(self, decimation):
+        self.decimation = decimation
+
+    def get_capture_freq(self):
+        return self.capture_freq
+
+    def set_capture_freq(self, capture_freq):
+        # FIX: Corrected typo in argument name `capture__freq`
+        self.capture_freq = capture_freq
+        self.wxgui_fftsink2_1.set_baseband_freq(self.capture_freq)
+        self.uhd_usrp_source_0.set_center_freq(self.capture_freq, 0)
+
+    def get_bitrate(self):
+        return self.bitrate
+
+    def set_bitrate(self, bitrate):
+        self.bitrate = bitrate
 
 
-# MODIFIED: Main function completely rewritten for robust start/stop and shutdown
-def main(top_block_cls=CollisionTX, options=None):
-    
-    parser = ArgumentParser(description="Transmit bursts of LoRa messages and then exit.")
-    parser.add_argument("-f", "--freq", type=int, default=10,
-                        help="Set the upper bound for random channel selection [1-40]. Default is 10.")
-    # MODIFIED: Added argument for TX power control
-    parser.add_argument("-p", "--power", type=int, default=20,
-                        help="Set TX VGA gain in dB (0-47). Default is 20.")
-    options = parser.parse_args()
-    
-    # Register the signal handlers ONCE before doing anything else
-    signal.signal(signal.SIGINT, sig_handler)
-    signal.signal(signal.SIGTERM, sig_handler)
-
-    channels = [902300000, 902500000, 902700000, 902900000, 903100000, 903300000, 903500000,903700000,903900000,904100000,      
-                904300000,904500000,904700000,904900000,905100000,
-                905300000,905500000,905700000,905900000,906100000,906300000,906500000,906700000,906900000,907100000,907300000,
-                9.075e8, 9.077e8, 9.079e8, 9.081e8, 9.083e8, 9.085e8, 9.087e8, 9.089e8, 9.091e8, 9.093e8, 9.095e8,
-                9.097e8, 9.099e8, 9.101e8, 9.103e8, 9.105e8, 9.107e8, 9.109e8]
-
-    total_runs = 500
-    for run_num in range(total_runs):
-        if shutdown_event.is_set():
-            print("Shutdown requested, stopping before next run.")
-            break
-
-        print(f"\n--- Starting Run {run_num + 1}/{total_runs} ---")
-        
-        tb = None
-        try:
-            # Choose a random frequency for this run
-            channel_idx = random.randint(0, min(options.freq, len(channels)-1))
-            channel_freq = channels[channel_idx]
-            
-            # Create and start the flowgraph for this specific run
-            tb = top_block_cls(freq=channel_freq, power=options.power)
-            tb.start()
-            print(f"Flowgraph started. Transmitting 10 messages on {channel_freq/1e6:.1f} MHz with {options.power} dB gain.")
-
-            while not tb.transmission_done.is_set() and not shutdown_event.is_set():
-                time.sleep(0.1) # Poll every 100ms
-
-        finally:
-            if tb:
-                print("Run complete. Stopping flowgraph...")
-                tb.stop()
-                tb.wait()
-                print("Flowgraph stopped.")
-    
-    print("\nMain loop finished or interrupted. Exiting.")
+def main(top_block_cls=single, options=None):
+    # ADDED: A try/except block for better error reporting.
+    # This will catch the crash and print the exact error message.
+    try:
+        tb = top_block_cls()
+        tb.Start(True)
+        tb.Wait()
+    except Exception as e:
+        print "Error starting flowgraph: %s" % e
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == '__main__':
