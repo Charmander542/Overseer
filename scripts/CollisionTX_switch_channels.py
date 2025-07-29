@@ -7,6 +7,7 @@
 # GNU Radio Python Flow Graph
 # Title: LoRa TX with Power Control and Auto-Exit (Corrected)
 # GNU Radio version: 3.10.11.0
+#
 
 from gnuradio import blocks
 import pmt
@@ -18,13 +19,11 @@ import signal
 from argparse import ArgumentParser
 from gnuradio.eng_arg import eng_float, intx
 from gnuradio import eng_notation
-#from gnuradio import uhd
 from gnuradio import soapy
 import time
 import gnuradio.lora_sdr as lora_sdr
 import threading
 import random
-
 
 # A new custom block to send a burst of N messages and then signal completion.
 class MessageBurstSource(gr.basic_block):
@@ -72,11 +71,7 @@ class MessageBurstSource(gr.basic_block):
         while not self._stop_event.is_set() and self._sent_count < self.num_messages:
             self._sent_count += 1
             msg_str = f"TEST{self._sent_count}"
-            
-            # --- THIS IS THE CORRECTED LINE ---
             msg = pmt.intern(msg_str)
-            # ----------------------------------
-
             self.message_port_pub(pmt.intern('strobe'), msg)
 
             print(f"Sent message: {msg_str} ({self._sent_count}/{self.num_messages})")
@@ -84,62 +79,51 @@ class MessageBurstSource(gr.basic_block):
             # Wait for the interval, but allow for a quick exit if stop() is called.
             self._stop_event.wait(self.interval_s)
         
-        # This code runs after the loop has finished or been stopped.
         if not self._stop_event.is_set():
             print("Finished sending all messages.")
-            # Signal the main thread that we are done
             if self._done_event:
                 print("Signaling flowgraph to shut down.")
                 self._done_event.set()
 
+# Global event to signal a shutdown request from Ctrl+C
+shutdown_event = threading.Event()
+
+def sig_handler(sig=None, frame=None):
+    """Signal handler to catch Ctrl+C and set the shutdown event."""
+    print("\n>>> SIGINT or SIGTERM detected. Requesting graceful shutdown...")
+    shutdown_event.set()
+
 
 class CollisionTX(gr.top_block):
 
-    def __init__(self, freq): # Accept freq argument
+    # MODIFIED: Added 'power' argument for TX gain control
+    def __init__(self, freq, power):
         gr.top_block.__init__(self, "Collision TX", catch_exceptions=True)
         
-        # Event to signal that transmission is complete
         self.transmission_done = threading.Event()
 
         ##################################################
         # Variables
         ##################################################
         self.samp_rate = samp_rate = 1000e3
-        # Store the freq variable
         self.freq = freq
+        self.power = power # Store the power variable
 
         ##################################################
         # Blocks
         ##################################################
-
-        self.soapy_hackrf_sink_0 = None
         dev = 'driver=hackrf'
         stream_args = ''
         tune_args = ['']
         settings = ['']
 
-        self.soapy_hackrf_sink_0 = soapy.sink(dev, "fc32", 1, '',stream_args, tune_args, settings)
+        self.soapy_hackrf_sink_0 = soapy.sink(dev, "fc32", 1, '', stream_args, tune_args, settings)
         self.soapy_hackrf_sink_0.set_sample_rate(0, samp_rate)
         self.soapy_hackrf_sink_0.set_bandwidth(0, 0)
-        self.soapy_hackrf_sink_0.set_frequency(0, freq)
-        self.soapy_hackrf_sink_0.set_gain(0, 'AMP', False)
-        self.soapy_hackrf_sink_0.set_gain(0, 'VGA', min(max(16, 0.0), 47.0))
-
-
-        ''''self.uhd_usrp_sink_0 = uhd.usrp_sink(
-            ",".join(("serial=3134B8C", '')),
-            uhd.stream_args(
-                cpu_format="fc32",
-                args='',
-                channels=list(range(0,1)),
-            ),
-            "",
-        )
-        self.uhd_usrp_sink_0.set_samp_rate(samp_rate)
-        #set freq from frequency argument. 
-        self.uhd_usrp_sink_0.set_center_freq(freq, 0)
-        self.uhd_usrp_sink_0.set_antenna("TX/RX", 0)
-        self.uhd_usrp_sink_0.set_gain(100, 0)'''
+        self.soapy_hackrf_sink_0.set_frequency(0, self.freq)
+        # MODIFIED: Correctly set TX gain. AMP (LNA) should be off for transmit.
+        self.soapy_hackrf_sink_0.set_gain(0, 'AMP', 0)
+        self.soapy_hackrf_sink_0.set_gain(0, 'VGA', self.power)
 
         self.lora_tx_0 = lora_sdr.lora_sdr_lora_tx(
             bw=125000,
@@ -153,13 +137,11 @@ class CollisionTX(gr.top_block):
             sync_word=[0x34]
         )
 
-        # Changed interval to a random number between 1 and 5 and pass the completion event
         self.message_burst_source_0 = MessageBurstSource(
             num_messages=10, 
-            interval_ms=random.random()*4000+1000, 
+            interval_ms=random.random() * 4000 + 1000, 
             done_event=self.transmission_done
         )
-
 
         ##################################################
         # Connections
@@ -167,79 +149,72 @@ class CollisionTX(gr.top_block):
         self.msg_connect((self.message_burst_source_0, 'strobe'), (self.lora_tx_0, 'in'))
         self.connect((self.lora_tx_0, 0), (self.soapy_hackrf_sink_0, 0))
 
-    # New method to allow the main thread to wait for completion
-    def wait_for_completion(self):
-        self.transmission_done.wait()
+    # This method is no longer needed as we poll the event directly
+    # def wait_for_completion(self):
+    #     self.transmission_done.wait()
 
-    def get_samp_rate(self):
-        return self.samp_rate
-
-    def set_samp_rate(self, samp_rate):
-        self.samp_rate = samp_rate
-        self.soapy_hackrf_sink_0.set_samp_rate(self.samp_rate)
-
-    def get_freq(self):
-        return self.freq
-
-    def set_freq(self, freq):
-        self.freq = freq
-        self.soapy_hackrf_sink_0.set_center_freq(self.freq, 0)
-    
     def get_power(self):
         return self.power
         
     def set_power(self, power):
+        """Sets the TX VGA gain."""
         self.power = power
-        self.soapy_hackrf_sink_0.set_gain(self.power, 0)
+        # MODIFIED: Correctly set the 'VGA' gain element
+        if self.soapy_hackrf_sink_0 is not None:
+            self.soapy_hackrf_sink_0.set_gain(0, 'VGA', self.power)
 
 
-# Main function updated to handle arguments and automatic shutdown
+# MODIFIED: Main function completely rewritten for robust start/stop and shutdown
 def main(top_block_cls=CollisionTX, options=None):
     
-    # Setup command-line argument parser
-    parser = ArgumentParser(description="Transmit a burst of LoRa messages and then exit.")
+    parser = ArgumentParser(description="Transmit bursts of LoRa messages and then exit.")
     parser.add_argument("-f", "--freq", type=int, default=10,
-                        help="Set the channel number [0-40]. Default is 1.")
+                        help="Set the upper bound for random channel selection [1-40]. Default is 10.")
+    # MODIFIED: Added argument for TX power control
+    parser.add_argument("-p", "--power", type=int, default=20,
+                        help="Set TX VGA gain in dB (0-47). Default is 20.")
     options = parser.parse_args()
     
+    # Register the signal handlers ONCE before doing anything else
+    signal.signal(signal.SIGINT, sig_handler)
+    signal.signal(signal.SIGTERM, sig_handler)
+
     channels = [902300000, 902500000, 902700000, 902900000, 903100000, 903300000, 903500000,903700000,903900000,904100000,      
                 904300000,904500000,904700000,904900000,905100000,
                 905300000,905500000,905700000,905900000,906100000,906300000,906500000,906700000,906900000,907100000,907300000,
-                907500000,907700000,907900000,908100000,908300000,908500000,908700000,908900000,909100000,909300000,909500000,
-                909700000,909900000,910100000,910300000,910500000,910700000,910900000]
+                9.075e8, 9.077e8, 9.079e8, 9.081e8, 9.083e8, 9.085e8, 9.087e8, 9.089e8, 9.091e8, 9.093e8, 9.095e8,
+                9.097e8, 9.099e8, 9.101e8, 9.103e8, 9.105e8, 9.107e8, 9.109e8]
 
-    print(f"Randomizing {options.freq} channels between 903100000 Hz and {channels[options.freq]} Hz.")
-    #total number of messages sent.    
-    msg = 500
-    #choose random freqeuency and run flowgraph according to msgs variable
-    for msg_nbr in range(msg):
-        # Create the flowgraph, passing the freq argument
-        channel = channels[random.randint(1, options.freq)]
-        tb = top_block_cls(freq=channel)
+    total_runs = 500
+    for run_num in range(total_runs):
+        if shutdown_event.is_set():
+            print("Shutdown requested, stopping before next run.")
+            break
+
+        print(f"\n--- Starting Run {run_num + 1}/{total_runs} ---")
         
-        def sig_handler(sig=None, frame=None):
-            print("\n>>> SIGINT or SIGTERM detected. Shutting down cleanly.")
-            # Set the event to release the main thread if it's waiting
-            tb.transmission_done.set()
-            tb.stop()
-            tb.wait()
-            sys.exit(0)
+        tb = None
+        try:
+            # Choose a random frequency for this run
+            channel_idx = random.randint(0, min(options.freq, len(channels)-1))
+            channel_freq = channels[channel_idx]
+            
+            # Create and start the flowgraph for this specific run
+            tb = top_block_cls(freq=channel_freq, power=options.power)
+            tb.start()
+            print(f"Flowgraph started. Transmitting 10 messages on {channel_freq/1e6:.1f} MHz with {options.power} dB gain.")
 
-        signal.signal(signal.SIGINT, sig_handler)
-        signal.signal(signal.SIGTERM, sig_handler)
+            while not tb.transmission_done.is_set() and not shutdown_event.is_set():
+                time.sleep(0.1) # Poll every 100ms
 
-        # Start the flowgraph
-        tb.start()
-        print(f"Flowgraph started. Transmitting with {options.freq} channels")
-
-        # Wait for the MessageBurstSource to signal that it's done
-        tb.wait_for_completion()
-
-    # Stop and wait for the flowgraph to shut down completely
-    print("Transmission complete. Stopping flowgraph...")
-    tb.stop()
-    tb.wait()
-    print("Flowgraph closed. Exiting.")
+        finally:
+            if tb:
+                print("Run complete. Stopping flowgraph...")
+                tb.stop()
+                tb.wait()
+                print("Flowgraph stopped.")
+    
+    print("\nMain loop finished or interrupted. Exiting.")
 
 
 if __name__ == '__main__':
