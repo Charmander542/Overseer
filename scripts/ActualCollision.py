@@ -14,7 +14,6 @@ from gnuradio import gr
 from gnuradio import uhd
 import gnuradio.lora_sdr as lora_sdr
 
-import numpy as np
 import threading
 import sys
 import signal
@@ -23,10 +22,10 @@ from argparse import ArgumentParser
 
 class CollisionTest(gr.top_block):
     """
-    A flowgraph designed to simulate LoRa collisions by adding two LoRa signals.
-    The second signal has a variable delay and gain applied to it.
+    A flowgraph designed to transmit two LoRa signals to simulate collisions.
+    The second signal has a specified delay and gain applied.
     """
-    def __init__(self):
+    def __init__(self, gain=1.0, delay_samples=0):
         gr.top_block.__init__(self, "LoRa Collision Test", catch_exceptions=True)
 
         ##################################################
@@ -34,10 +33,8 @@ class CollisionTest(gr.top_block):
         ##################################################
         self.samp_rate = samp_rate = int(500e3)
         self.center_freq = center_freq = 910.3e6
-
-        # These will be controlled externally by the main loop
-        self.gain = gain = 0
-        self.delay = delay = 0
+        self.gain = gain
+        self.delay = delay_samples
 
         ##################################################
         # Blocks
@@ -63,7 +60,6 @@ class CollisionTest(gr.top_block):
             samp_rate=samp_rate, sf=7, ldro_mode=2,
             frame_zero_padd=128, sync_word=[0x12]
         )
-        self.blocks_message_strobe_0 = blocks.message_strobe(pmt.intern("TEST"), 1000)
 
         # --- Signal Path 2 (Interfering Signal) ---
         self.lora_tx_0_0 = lora_sdr.lora_sdr_lora_tx(
@@ -71,109 +67,85 @@ class CollisionTest(gr.top_block):
             samp_rate=samp_rate, sf=7, ldro_mode=2,
             frame_zero_padd=128, sync_word=[0x12]
         )
-        self.blocks_message_strobe_0_0 = blocks.message_strobe(pmt.intern("DING"), 1000)
 
-        # Blocks to apply variable delay and gain to the second signal
+        # Blocks to apply variable delay and gain
         self.blocks_delay_0 = blocks.delay(gr.sizeof_gr_complex * 1, int(self.delay))
         self.blocks_multiply_const_vxx_0 = blocks.multiply_const_cc(self.gain)
 
-        # Block to add the two signals together
+        # Block to add the two signals
         self.blocks_add_xx_0 = blocks.add_vcc(1)
-
 
         ##################################################
         # Connections
         ##################################################
-        # Path 1: Strobe -> LoRa TX -> Adder
-        self.msg_connect((self.blocks_message_strobe_0, 'strobe'), (self.lora_tx_0, 'in'))
         self.connect((self.lora_tx_0, 0), (self.blocks_add_xx_0, 0))
-
-        # Path 2: Strobe -> LoRa TX -> Delay -> Gain -> Adder
-        self.msg_connect((self.blocks_message_strobe_0_0, 'strobe'), (self.lora_tx_0_0, 'in'))
         self.connect((self.lora_tx_0_0, 0), (self.blocks_delay_0, 0))
         self.connect((self.blocks_delay_0, 0), (self.blocks_multiply_const_vxx_0, 0))
         self.connect((self.blocks_multiply_const_vxx_0, 0), (self.blocks_add_xx_0, 1))
-
-        # Final summed signal to the USRP
         self.connect((self.blocks_add_xx_0, 0), (self.uhd_usrp_sink_0, 0))
 
-    # --- Setter methods to control the flowgraph externally ---
-    def set_gain(self, gain):
-        self.gain = gain
-        self.blocks_multiply_const_vxx_0.set_k(self.gain)
-
-    def set_delay(self, delay):
-        self.delay = delay
-        self.blocks_delay_0.set_dly(int(self.delay))
-
-# Global event for handling graceful shutdown
-shutdown_event = threading.Event()
 
 def main():
-    # Setup command-line argument parser
-    parser = ArgumentParser(description="Run a LoRa collision test by iterating through gain and delay values.")
-    parser.add_argument("--min-gain", type=float, default=0.1, help="Minimum gain for the interfering signal.")
-    parser.add_argument("--max-gain", type=float, default=1.0, help="Maximum gain for the interfering signal.")
-    parser.add_argument("--gain-steps", type=int, default=5, help="Number of steps for the gain range.")
-    parser.add_argument("--min-delay", type=int, default=0, help="Minimum delay in samples.")
-    parser.add_argument("--max-delay", type=int, default=1000, help="Maximum delay in samples.")
-    parser.add_argument("--delay-steps", type=int, default=5, help="Number of steps for the delay range.")
-    parser.add_argument("--repetitions", type=int, default=20, help="Number of transmissions for each combination.")
+    parser = ArgumentParser(description="Run a LoRa collision test for a specific gain and delay.")
+    parser.add_argument("--gain", type=float, default=1.0, help="Gain for the interfering signal.")
+    parser.add_argument("--delay", type=float, default=0.0, help="Delay in seconds for the interfering signal.")
+    parser.add_argument("--packets", type=int, default=300, help="Number of packets to transmit.")
     args = parser.parse_args()
 
-    # Create the test vectors for gain and delay
-    gain_range = np.linspace(args.min_gain, args.max_gain, args.gain_steps)
-    delay_range = np.linspace(args.min_delay, args.max_delay, args.delay_steps, dtype=int)
-    
-    # The message strobe interval is 1000ms, so each repetition takes 1 second
-    duration_per_repetition = 1.0
-    
-    # Instantiate the flowgraph
-    tb = CollisionTest()
+    # Calculate delay in samples
+    samp_rate = int(500e3)
+    delay_samples = int(args.delay * samp_rate)
 
-    # Define a signal handler for Ctrl+C
+    tb = CollisionTest(gain=args.gain, delay_samples=delay_samples)
+
+    def send_packets(num_packets):
+        """A function to run in a thread that sends a specific number of packets."""
+        # Wait a moment for the flowgraph to start up
+        time.sleep(1)
+
+        # Create the PMT messages
+        msg1 = pmt.to_pmt(pmt.intern("TEST"))
+        msg2 = pmt.to_pmt(pmt.intern("DING"))
+        
+        print(f"Sending {num_packets} packets...")
+        for i in range(num_packets):
+            # Post messages to the message input ports of the LoRa TX blocks. [11]
+            tb.lora_tx_0.message_port_pub(pmt.intern('in'), msg1)
+            tb.lora_tx_0_0.message_port_pub(pmt.intern('in'), msg2)
+            time.sleep(0.1) # Small delay between packets
+        print("Finished sending packets.")
+
+    # Handle Ctrl+C gracefully
     def sig_handler(sig=None, frame=None):
-        print("\nShutdown requested. Stopping experiment...")
-        shutdown_event.set()
+        print("Shutdown requested. Stopping flowgraph...")
+        tb.stop()
+        tb.wait()
+        sys.exit(0)
 
     signal.signal(signal.SIGINT, sig_handler)
     signal.signal(signal.SIGTERM, sig_handler)
 
-    tb.start()
-    print("Flowgraph started. Beginning test iterations...")
-    print(f"Each combination will run for {args.repetitions} transmissions.")
-
-    try:
-        # --- Main Experiment Loop ---
-        for gain in gain_range:
-            if shutdown_event.is_set(): break
-            tb.set_gain(gain)
-
-            for delay in delay_range:
-                if shutdown_event.is_set(): break
-                tb.set_delay(delay)
-
-                print(f"\n--- Testing Combination ---")
-                print(f"  Gain: {gain:.3f} | Delay: {delay} samples")
-                
-                # Wait for the required number of transmissions, while listening for shutdown signal
-                duration = args.repetitions * duration_per_repetition
-                shutdown_event.wait(timeout=duration)
-                
-                if shutdown_event.is_set():
-                    print("  Test interrupted by user.")
-                    break
-                else:
-                    print("  Done.")
+    print(f"--- Starting Test ---")
+    print(f"  Gain: {args.gain:.2f} | Delay: {args.delay:.3f}s ({delay_samples} samples) | Packets: {args.packets}")
     
-    except Exception as e:
-        print(f"An error occurred during the test: {e}")
-    finally:
-        # --- Cleanup ---
-        print("\nTest loop finished. Stopping flowgraph.")
-        tb.stop()
-        tb.wait()
-        print("Flowgraph stopped. Exiting.")
+    # Start the flowgraph. [18]
+    tb.start()
+
+    # Start the packet sending thread
+    packet_thread = threading.Thread(target=send_packets, args=(args.packets,))
+    packet_thread.start()
+
+    # Wait for the thread to finish
+    packet_thread.join()
+
+    # Wait a bit longer to ensure the last packet is fully transmitted
+    time.sleep(2)
+
+    # --- Cleanup ---
+    print("Test finished. Stopping flowgraph.")
+    tb.stop()
+    tb.wait()
+    print("Flowgraph stopped. Exiting.")
 
 
 if __name__ == '__main__':
