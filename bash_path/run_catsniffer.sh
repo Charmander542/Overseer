@@ -15,10 +15,7 @@ echo "[catsniffer] Listening on $PORT at ${BAUD} baud..."
 # === Configure port ===
 stty -F "$PORT" cs8 "$BAUD" igncr -ixon -icanon -echo
 
-echo "freq " > ${PORT}
-echo "efreq " > ${PORT}
-echo "set_step 0.2" > ${PORT}
-echo "set_range " > ${PORT}
+echo "freq 910.3" > ${PORT}
 
 # === Start listening ===
 cat "$PORT"
