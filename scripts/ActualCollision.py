@@ -5,7 +5,7 @@
 # SPDX-License-Identifier: GPL-3.0
 #
 # GNU Radio Python Flow Graph
-# Title: LoRa Collision Test with Variable Gain and Delay
+# Title: LoRa Collision Test with Variable Gain, Delay, and Spreading Factor
 # GNU Radio version: 3.10.11.0
 
 from gnuradio import blocks
@@ -24,8 +24,9 @@ class CollisionTest(gr.top_block):
     """
     A flowgraph designed to transmit two LoRa signals to simulate collisions.
     The second signal has a specified delay and gain applied.
+    The spreading factor of the transmission is also configurable.
     """
-    def __init__(self, gain=1.0, delay_samples=0):
+    def __init__(self, gain=1.0, delay_samples=0, spreading_factor=7):
         gr.top_block.__init__(self, "LoRa Collision Test", catch_exceptions=True)
 
         ##################################################
@@ -35,6 +36,7 @@ class CollisionTest(gr.top_block):
         self.center_freq = center_freq = 910.3e6
         self.gain = gain
         self.delay = delay_samples
+        self.spreading_factor = spreading_factor
 
         ##################################################
         # Blocks
@@ -57,14 +59,14 @@ class CollisionTest(gr.top_block):
         # --- Signal Path 1 (Reference Signal) ---
         self.lora_tx_0 = lora_sdr.lora_sdr_lora_tx(
             bw=125000, cr=1, has_crc=True, impl_head=False,
-            samp_rate=samp_rate, sf=7, ldro_mode=2,
+            samp_rate=samp_rate, sf=self.spreading_factor, ldro_mode=2,
             frame_zero_padd=128, sync_word=[0x12]
         )
 
         # --- Signal Path 2 (Interfering Signal) ---
         self.lora_tx_0_0 = lora_sdr.lora_sdr_lora_tx(
             bw=125000, cr=1, has_crc=True, impl_head=False,
-            samp_rate=samp_rate, sf=7, ldro_mode=2,
+            samp_rate=samp_rate, sf=self.spreading_factor, ldro_mode=2,
             frame_zero_padd=128, sync_word=[0x12]
         )
 
@@ -86,9 +88,10 @@ class CollisionTest(gr.top_block):
 
 
 def main():
-    parser = ArgumentParser(description="Run a LoRa collision test for a specific gain and delay.")
+    parser = ArgumentParser(description="Run a LoRa collision test for a specific gain, delay, and spreading factor.")
     parser.add_argument("--gain", type=float, default=1.0, help="Gain for the interfering signal.")
     parser.add_argument("--delay", type=float, default=0.0, help="Delay in seconds for the interfering signal.")
+    parser.add_argument("--spreading-factor", type=int, default=7, choices=range(7, 13), help="Spreading factor (7-12).")
     parser.add_argument("--packets", type=int, default=300, help="Number of packets to transmit.")
     args = parser.parse_args()
 
@@ -96,26 +99,21 @@ def main():
     samp_rate = int(500e3)
     delay_samples = int(args.delay * samp_rate)
 
-    tb = CollisionTest(gain=args.gain, delay_samples=delay_samples)
+    tb = CollisionTest(gain=args.gain, delay_samples=delay_samples, spreading_factor=args.spreading_factor)
 
     def send_packets(num_packets):
         """A function to run in a thread that sends a specific number of packets."""
-        # Wait a moment for the flowgraph to start up
         time.sleep(1)
-
-        # Create the PMT messages
         msg1 = pmt.to_pmt(pmt.intern("TEST"))
         msg2 = pmt.to_pmt(pmt.intern("DING"))
         
         print(f"Sending {num_packets} packets...")
         for i in range(num_packets):
-            # Post messages to the message input ports of the LoRa TX blocks. [11]
             tb.lora_tx_0.message_port_pub(pmt.intern('in'), msg1)
             tb.lora_tx_0_0.message_port_pub(pmt.intern('in'), msg2)
-            time.sleep(0.1) # Small delay between packets
+            time.sleep(0.1)
         print("Finished sending packets.")
 
-    # Handle Ctrl+C gracefully
     def sig_handler(sig=None, frame=None):
         print("Shutdown requested. Stopping flowgraph...")
         tb.stop()
@@ -126,22 +124,16 @@ def main():
     signal.signal(signal.SIGTERM, sig_handler)
 
     print(f"--- Starting Test ---")
-    print(f"  Gain: {args.gain:.2f} | Delay: {args.delay:.3f}s ({delay_samples} samples) | Packets: {args.packets}")
+    print(f"  SF: {args.spreading_factor} | Gain: {args.gain:.2f} | Delay: {args.delay:.3f}s ({delay_samples} samples) | Packets: {args.packets}")
     
-    # Start the flowgraph. [18]
     tb.start()
 
-    # Start the packet sending thread
     packet_thread = threading.Thread(target=send_packets, args=(args.packets,))
     packet_thread.start()
-
-    # Wait for the thread to finish
     packet_thread.join()
 
-    # Wait a bit longer to ensure the last packet is fully transmitted
     time.sleep(2)
 
-    # --- Cleanup ---
     print("Test finished. Stopping flowgraph.")
     tb.stop()
     tb.wait()
