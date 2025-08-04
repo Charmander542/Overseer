@@ -52,7 +52,7 @@ class CollisionTest(gr.top_block):
         )
         self.uhd_usrp_sink_0.set_samp_rate(samp_rate)
         self.uhd_usrp_sink_0.set_center_freq(center_freq, 0)
-        self.uhd_usrp_sink_0.set_gain(0, 0)
+        self.uhd_usrp_sink_0.set_gain(100, 0)
         self.uhd_usrp_sink_0.set_antenna("TX/RX", 0)
 
         self.lora_tx_0_0 = lora_sdr.lora_sdr_lora_tx(
