@@ -25,7 +25,7 @@ class CollisionTest(gr.top_block):
     It accepts configuration via arguments and runs for a calculated duration
     to transmit a specific number of packets.
     """
-    def __init__(self, spreading_factor=7, gain=1.0, delay_samples=0, strobe_period_ms=100):
+    def __init__(self, spreading_factor=7, gain=1.0, delay_samples=0, strobe_period_ms=2000):
         gr.top_block.__init__(self, "LoRa Automated Collision Test", catch_exceptions=True)
 
         ##################################################
