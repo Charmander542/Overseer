@@ -43,6 +43,8 @@ RH_RF95 rf95(RFM95_CS, RFM95_INT);
 SerialCommand SCmd;
 bool is_running = false;
 
+int num_packets = 100;
+
 // Non-blocking timer for sending packets
 const long packetInterval = 1000; // Send a packet every 1 second
 unsigned long previousPacketMillis = 0;
@@ -115,7 +117,7 @@ void setup() {
 void loop() {
   SCmd.readSerial();
 
-  if (is_running) {
+  if (is_running && num_packets>0) {
     unsigned long currentMillis = millis();
 
     // --- FREQUENCY HOPPING LOGIC ---
@@ -148,6 +150,7 @@ void loop() {
       uint8_t packet_len = strlen(radiopacket) + 1;
       rf95.send((uint8_t *)radiopacket, packet_len);
       rf95.waitPacketSent();
+      num_packets--;
 
       // (Optional reply logic)
       uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
